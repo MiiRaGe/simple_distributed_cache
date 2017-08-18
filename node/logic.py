@@ -9,10 +9,10 @@ REDUNDANCY_SETTING = 1
 
 class Cache:
     def __init__(self, uuid, ip):
-        self.id = uuid
+        self.uid = uuid
         self.ip = ip
         self.memory_cache = {}
-        self.nodes = [(uuid, self)]
+        self.nodes = [(get_hashed_key(uuid), self)]
 
     def set(self, key='', data=None):
         """
@@ -103,15 +103,40 @@ class Cache:
         index = bisect_right(self.nodes, (indexed_key, 0))
         return index if index != len(self.nodes) else 0
 
-    def add_node(self, id=None, ip=''):
+    def announce_new(self, master_ip):
+        with zmq.Context() as context:
+            socket = context.socket(zmq.REP)
+            socket.connect('tcp://%s' % master_ip)
+            message = json.dumps({'method': 'get_nodes'}).encode('utf8')
+            socket.send(message)
+            message = socket.recv()
+        response_data = json.loads(message.decode('utf8'))
+        self.nodes = response_data
+        for node in self.nodes:
+            with zmq.Context() as context:
+                socket = context.socket(zmq.REP)
+                socket.connect('tcp://%s' % node['ip'])
+                message = json.dumps({
+                    'method': 'add_node',
+                    'kwargs': {'id': self.ip, 'uid': self.uid}}
+                ).encode('utf8')
+                socket.send(message)
+
+        self.nodes.append((get_hashed_key(self.uid), self))
+        self.nodes.sort(key=lambda x: x[0])
+
+    def get_nodes(self):
+        return [{'uid': x.uid, 'ip': x.ip} for _, x in self.nodes]
+
+    def add_node(self, uid=None, ip=''):
         """
         Adds a node from the outside to the internal list
         :param id:
         :param ip:
         :return:
         """
-        self.nodes.append((id, CacheProxy(ip)))
-        self.nodes.sort(key=lambda x: get_hashed_key(x[0]))
+        self.nodes.append((get_hashed_key(uid), CacheProxy(uid, ip)))
+        self.nodes.sort(key=lambda x: x[0])
 
 
 class CacheProxy:
@@ -119,11 +144,12 @@ class CacheProxy:
     Proxy for the Cache object
     There's no differences in behaviour between local and remote cache.
     """
-    def __init__(self, ip):
+    def __init__(self, uid, ip):
+        self.uid = uid
         self.ip = ip
         context = zmq.Context()
         self.socket = context.socket(zmq.REP)
-        self.socket.connect(ip)
+        self.socket.connect('tcp://%s' % ip)
 
     def __getattr__(self, item):
         def proxy_method(**kwargs):

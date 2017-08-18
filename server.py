@@ -8,21 +8,26 @@ from node.logic import Cache
 
 
 if __name__ == '__main__':
-    port = sys.argv[1]
+    ip = sys.argv[1]
     context = zmq.Context()
     socket = context.socket(zmq.REP)
-    address = "tcp://localhost:%s" % port
+    address = "tcp://%s" % ip
     print('Listening to: %s' % address)
-    socket.connect(address)
+    socket.bind(address)
 
     cache = Cache(str(uuid4()), address)
+    try:
+        master_ip = sys.argv[2]
+        if ip != master_ip:
+            cache.announce_new(master_ip)
+    except IndexError:
+        pass
 
     while True:
-        print(socket)
         message = socket.recv()
         print("Received request: %s" % message)
 
-        element = json.loads(message)
+        element = json.loads(message.decode('utf8'))
         if element['method'] == 'set':
             socket.send(json.dumps(cache.set(**element['kwargs'])).encode('utf8'))
             continue
@@ -35,7 +40,10 @@ if __name__ == '__main__':
         elif element['method'] == 'set_key':
             socket.send(json.dumps(cache.set_key(**element['kwargs'])).encode('utf8'))
             continue
-        elif element['method'] == 'announce':
-            print('Not implemented yet')
-            pass
+        elif element['method'] == 'get_nodes':
+            socket.send(json.dumps(cache.get_nodes()).encode('utf8'))
+            continue
+        elif element['method'] == 'add_node':
+            cache.add_node(**element['kwargs'])
+            socket.send(b"OK")
         socket.send(b"Ok")
