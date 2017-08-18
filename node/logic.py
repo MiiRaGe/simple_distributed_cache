@@ -1,17 +1,20 @@
+import json
 from hashlib import sha1
 from bisect import bisect_right
+
+import zmq
 
 REDUNDANCY_SETTING = 1
 
 
 class Cache:
-    nodes = []
-
-    def __init__(self, uuid):
+    def __init__(self, uuid, ip):
         self.id = uuid
+        self.ip = ip
         self.memory_cache = {}
+        self.nodes = [(uuid, self)]
 
-    def set(self, key, value):
+    def set(self, key='', data=None):
         """
         Assuming that each node has a list of all accessible nodes.
         Find the first node it's suppose to save the data to
@@ -25,7 +28,7 @@ class Cache:
         redundancy = 0
         while redundancy <= REDUNDANCY_SETTING:
             new_index, node = self.get_next_node(index)
-            node.set_key(key, value)
+            node.set_key(key, data)
             if new_index == origin_index:
                 break
             index = new_index
@@ -48,7 +51,7 @@ class Cache:
             index = 0
         return index, node
 
-    def get(self, key):
+    def get(self, key=''):
         """
         Get method for the cache cluster, assumes each node has the list of all nodes.
         It finds where the key is supposed to be, then tries to get it as many time as REDUNDANCY_SETTING
@@ -99,6 +102,39 @@ class Cache:
         indexed_key = get_hashed_key(key)
         index = bisect_right(self.nodes, (indexed_key, 0))
         return index if index != len(self.nodes) else 0
+
+    def add_node(self, id=None, ip=''):
+        """
+        Adds a node from the outside to the internal list
+        :param id:
+        :param ip:
+        :return:
+        """
+        self.nodes.append((id, CacheProxy(ip)))
+        self.nodes.sort(key=lambda x: get_hashed_key(x[0]))
+
+
+class CacheProxy:
+    """
+    Proxy for the Cache object
+    There's no differences in behaviour between local and remote cache.
+    """
+    def __init__(self, ip):
+        self.ip = ip
+        context = zmq.Context()
+        self.socket = context.socket(zmq.REP)
+        self.socket.connect(ip)
+
+    def __getattr__(self, item):
+        def proxy_method(**kwargs):
+            message = json.dumps({
+                'method': item,
+                'kwargs': kwargs
+            })
+            self.socket.send(message)
+            message = self.socket.recv()
+            return message
+        return proxy_method
 
 
 def get_hashed_key(key):
