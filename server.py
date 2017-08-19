@@ -4,8 +4,7 @@ import sys
 
 from uuid import uuid4
 
-from node.logic import Cache
-
+from node.logic import Cache, announce_new
 
 if __name__ == '__main__':
     ip = sys.argv[1]
@@ -20,7 +19,7 @@ if __name__ == '__main__':
         master_ip = sys.argv[2]
         if ip != master_ip:
             print('Announcing self to master ip: %s' % master_ip)
-            cache.announce_new(master_ip)
+            announce_new(cache, master_ip)
     except IndexError:
         pass
 

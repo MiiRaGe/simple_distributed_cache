@@ -8,6 +8,7 @@ REDUNDANCY_SETTING = 1
 REQUEST_TIMEOUT = 2500
 REQUEST_RETRIES = 2
 
+
 class Cache:
     def __init__(self, uuid, ip):
         self.uid = uuid
@@ -29,9 +30,31 @@ class Cache:
         redundancy = 0
         while redundancy <= REDUNDANCY_SETTING:
             new_index, node = self.get_next_node(index)
-            node.set_key(key=key, data=data)
-            if new_index == origin_index:
-                break
+            try:
+                node.set_key(key=key, data=data)
+            except AttributeError:
+                pass
+            index = new_index
+            redundancy += 1
+
+    def get(self, key=''):
+        """
+        Get method for the cache cluster, assumes each node has the list of all nodes.
+        It finds where the key is supposed to be, then tries to get it as many time as REDUNDANCY_SETTING
+        Increasing indexes if it's down.
+        It cannot loop infinitely as self is part of the nodes.
+        :param key:
+        :return:
+        """
+        origin_index = self.get_next_node_index(key)
+        index = origin_index
+        redundancy = 0
+        while redundancy <= REDUNDANCY_SETTING:
+            new_index, node = self.get_next_node(index)
+            try:
+                return node.get_key(key=key)
+            except AttributeError:
+                pass
             index = new_index
             redundancy += 1
 
@@ -42,37 +65,11 @@ class Cache:
         :param index:
         :return:
         """
-        while not self.nodes[index][1].is_alive():
-            index += 1
-            if index == len(self.nodes):
-                index = 0
         node = self.nodes[index][1]
         index += 1
         if index == len(self.nodes):
             index = 0
         return index, node
-
-    def get(self, key=''):
-        """
-        Get method for the cache cluster, assumes each node has the list of all nodes.
-        It finds where the key is supposed to be, then tries to get it as many time as REDUNDANCY_SETTING
-        Increasing indexes if it's down.
-        It cannot loop infinitely as self is part of the nodes.
-        :param key: 
-        :return: 
-        """
-        origin_index = self.get_next_node_index(key)
-        index = origin_index
-        result = None
-        redundancy = 0
-        while result is None and redundancy <= REDUNDANCY_SETTING:
-            new_index, node = self.get_next_node(index)
-            result = node.get_key(key=key)
-            if new_index == origin_index:
-                break
-            index = new_index
-            redundancy += 1
-        return result
 
     def set_key(self, key='', data=None):
         """
@@ -104,37 +101,6 @@ class Cache:
         index = bisect_right(self.nodes, (indexed_key, 0))
         return index if index != len(self.nodes) else 0
 
-    def announce_new(self, master_ip):
-        print('Requesting Nodes')
-        with zmq.Context() as context:
-            with context.socket(zmq.REQ) as socket:
-                socket.connect('tcp://%s' % master_ip)
-                print('Sending request for get_nodes')
-                socket.send_json({
-                    'method': 'add_node_and_get_nodes',
-                    'kwargs': {'ip': self.ip, 'uid': self.uid}
-                })
-                print('waiting for get_nodes answer')
-                nodes = socket.recv_json()
-        print('Got Nodes')
-        self.nodes = []
-        for node in nodes:
-            if node['ip'] == self.ip:
-                self.nodes.append((get_hashed_key(self.uid), self))
-                continue
-            self.nodes.append((get_hashed_key(node['uid']), CacheProxy(node['uid'], node['ip'])))
-            if node['ip'] == master_ip:
-                continue
-            with zmq.Context() as context:
-                with context.socket(zmq.REQ) as socket:
-                    socket.connect('tcp://%s' % node['ip'])
-                    socket.send_json({
-                        'method': 'add_node',
-                        'kwargs': {'ip': self.ip, 'uid': self.uid}
-                    })
-                    message = socket.recv()
-        print('Announced self')
-
     def get_nodes(self):
         return [{'uid': x.uid, 'ip': x.ip} for _, x in self.nodes]
 
@@ -157,6 +123,7 @@ class CacheProxy:
     Proxy for the Cache object
     There's no differences in behaviour between local and remote cache.
     """
+
     def __init__(self, uid, ip):
         self.uid = uid
         self.ip = ip
@@ -167,46 +134,21 @@ class CacheProxy:
         self.poll.register(self.socket, zmq.POLLIN)
 
     def call(self, method, **kwargs):
-        self.socket.send_json({
+        retries_left = REQUEST_RETRIES
+        request = {
             'method': method,
             'kwargs': kwargs
-        })
-        message = self.socket.recv()
-        return json.loads(message.decode('utf8'))
-
-    def set_key(self, **kwargs):
-        return self.call('set_key', **kwargs)
-
-    def get_key(self, **kwargs):
-        return self.call('get_key', **kwargs)
-
-    def add_node(self, **kwargs):
-        return self.call('add_node', **kwargs)
-
-    def is_alive(self, **kwargs):
-        sequence = 0
-        retries_left = REQUEST_RETRIES
+        }
         while retries_left:
-            sequence += 1
-            request = {'method': 'heartbeat', 'kwargs': sequence}
             self.socket.send_json(request)
-
             expect_reply = True
             while expect_reply:
                 socks = dict(self.poll.poll(REQUEST_TIMEOUT))
                 if socks.get(self.socket) == zmq.POLLIN:
-                    reply = self.socket.recv()
-                    if not reply:
-                        break
-                    if int(reply) == sequence:
-                        print("I: Server replied OK (%s)" % reply)
-                        retries_left = REQUEST_RETRIES
-                        expect_reply = False
-                    else:
-                        print("E: Malformed reply from server: %s" % reply)
-
+                    reply = self.socket.recv_json()
+                    return reply
                 else:
-                    print("W: No response from server, retrying…")
+                    print("W: No response from server, retrying...")
                     # Socket is confused. Close and remove it.
                     self.socket.setsockopt(zmq.LINGER, 0)
                     self.socket.close()
@@ -218,7 +160,18 @@ class CacheProxy:
                     self.socket = self.context.socket(zmq.REQ)
                     self.socket.connect('tcp://%s' % self.ip)
                     self.poll.register(self.socket, zmq.POLLIN)
-                    self.socket.send(request)
+                    self.socket.send_json(request)
+        # Mimic the case where Cache is None locally, cally cache.get_key  would through attibute error
+        raise AttributeError
+
+    def set_key(self, **kwargs):
+        return self.call('set_key', **kwargs)
+
+    def get_key(self, **kwargs):
+        return self.call('get_key', **kwargs)
+
+    def add_node(self, **kwargs):
+        return self.call('add_node', **kwargs)
 
 
 def get_hashed_key(key):
@@ -231,3 +184,43 @@ def get_hashed_key(key):
     hashed_key = sha1()
     hashed_key.update(key.encode('utf8'))
     return int(hashed_key.hexdigest()[:8], 16)
+
+
+def announce_new(new_cache, master_ip):
+    """
+    This modifies announces new_cache to the master_ip.
+    Gets the list of node from the master_ip.
+    Then announce the new_cache to the list of nodes in the cluster.
+    :param new_cache:
+    :param master_ip:
+    :return:
+    """
+    print('Requesting Nodes')
+    with zmq.Context() as context:
+        with context.socket(zmq.REQ) as socket:
+            socket.connect('tcp://%s' % master_ip)
+            print('Sending request for get_nodes')
+            socket.send_json({
+                'method': 'add_node_and_get_nodes',
+                'kwargs': {'ip': new_cache.ip, 'uid': new_cache.uid}
+            })
+            print('waiting for get_nodes answer')
+            nodes = socket.recv_json()
+    print('Got Nodes')
+    new_cache.nodes = []
+    for node in nodes:
+        if node['ip'] == new_cache.ip:
+            new_cache.nodes.append((get_hashed_key(new_cache.uid), new_cache))
+            continue
+        new_cache.nodes.append((get_hashed_key(node['uid']), CacheProxy(node['uid'], node['ip'])))
+        if node['ip'] == master_ip:
+            continue
+        with zmq.Context() as context:
+            with context.socket(zmq.REQ) as socket:
+                socket.connect('tcp://%s' % node['ip'])
+                socket.send_json({
+                    'method': 'add_node',
+                    'kwargs': {'ip': new_cache.ip, 'uid': new_cache.uid}
+                })
+                socket.recv()
+    print('Announced self')
