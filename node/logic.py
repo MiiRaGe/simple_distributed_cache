@@ -6,7 +6,7 @@ from bisect import bisect_right
 import zmq
 
 REDUNDANCY_SETTING = 1
-REQUEST_TIMEOUT = 2500
+REQUEST_TIMEOUT = 500
 REQUEST_RETRIES = 2
 
 
@@ -31,18 +31,14 @@ def announce_new(new_cache, master_ip):
     :param master_ip:
     :return:
     """
-    print('Requesting Nodes')
-    with zmq.Context() as context:
-        with context.socket(zmq.REQ) as socket:
-            socket.connect('tcp://%s' % master_ip)
-            print('Sending request for get_nodes')
-            socket.send_json({
-                'method': 'add_node_and_get_nodes',
-                'kwargs': {'ip': new_cache.ip, 'uid': new_cache.uid}
-            })
-            print('waiting for get_nodes answer')
-            nodes = socket.recv_json()
-    print('Got Nodes')
+    nm = NetworkMessager(master_ip)
+    try:
+        print('Calling add_node_and_get_nodes')
+        nodes = nm.call('add_node_and_get_nodes', **{'ip': new_cache.ip, 'uid': new_cache.uid})
+    except AttributeError:
+        nm.term()
+        return
+    print('Got all nodes, announcing to them')
     new_cache.nodes = []
     for node in nodes:
         if node['ip'] == new_cache.ip:
@@ -59,7 +55,6 @@ def announce_new(new_cache, master_ip):
                     'kwargs': {'ip': new_cache.ip, 'uid': new_cache.uid}
                 })
                 socket.recv()
-    print('Announced self')
 
 
 class Cache:
@@ -131,6 +126,7 @@ class Cache:
         :param value:
         :return:
         """
+        print('\tInner method: set_key')
         self.memory_cache[key] = data
 
     def get_key(self, key=''):
@@ -139,6 +135,7 @@ class Cache:
         :param key:
         :return:
         """
+        print('\tInner method: get_key')
         return self.memory_cache.get(key)
 
     def get_next_node_index(self, key):
@@ -167,9 +164,6 @@ class Cache:
         self.nodes.append((get_hashed_key(uid), CacheProxy(uid, ip)))
         self.nodes.sort(key=lambda x: x[0])
 
-    def is_alive(self):
-        return True
-
 
 class NetworkMessager:
     def __init__(self, ip):
@@ -179,6 +173,7 @@ class NetworkMessager:
         self.socket.connect('tcp://%s' % ip)
         self.poll = zmq.Poller()
         self.poll.register(self.socket, zmq.POLLIN)
+        self.retry_timeout = REQUEST_TIMEOUT
 
     def _change_ip(self, ip):
         """
@@ -186,43 +181,52 @@ class NetworkMessager:
         :return:
         """
         self.ip = ip
-        self.socket.setsockopt(zmq.LINGER, 0)
         self.socket.close()
-        self.poll.unregister(self.socket)
+        try:
+            self.poll.unregister(self.socket)
+        except KeyError:
+            pass
         self.socket = self.context.socket(zmq.REQ)
         self.socket.connect('tcp://%s' % ip)
         self.poll.register(self.socket, zmq.POLLIN)
 
-    def _call(self, method, **kwargs):
+    def call(self, method, **kwargs):
+        print('\tRemote method: %s' % method)
         retries_left = REQUEST_RETRIES
         request = {
             'method': method,
             'kwargs': kwargs
         }
-        while retries_left:
-            self.socket.send_json(request)
-            expect_reply = True
-            while expect_reply:
-                socks = dict(self.poll.poll(REQUEST_TIMEOUT))
-                if socks.get(self.socket) == zmq.POLLIN:
-                    reply = self.socket.recv_json()
-                    return reply
-                else:
-                    print("W: No response from server, retrying...")
-                    # Socket is confused. Close and remove it.
-                    self.socket.setsockopt(zmq.LINGER, 0)
-                    self.socket.close()
-                    self.poll.unregister(self.socket)
-                    retries_left -= 1
-                    if retries_left == 0:
-                        break
-                    # Create new connection
-                    self.socket = self.context.socket(zmq.REQ)
-                    self.socket.connect('tcp://%s' % self.ip)
-                    self.poll.register(self.socket, zmq.POLLIN)
-                    self.socket.send_json(request)
-        # Mimic the case where Cache is None locally, cally cache.get_key  would through attibute error
+        try:
+            while retries_left:
+                self.socket.send_json(request)
+                expect_reply = True
+                while expect_reply:
+                    socks = dict(self.poll.poll(self.retry_timeout))
+                    if socks.get(self.socket) == zmq.POLLIN:
+                        return self.socket.recv_json()
+                    else:
+                        self.socket.close()
+                        self.poll.unregister(self.socket)
+                        retries_left -= 1
+                        if retries_left == 0:
+                            break
+                        # Create new connection
+                        self.socket = self.context.socket(zmq.REQ)
+                        self.socket.connect('tcp://%s' % self.ip)
+                        self.poll.register(self.socket, zmq.POLLIN)
+                        self.socket.send_json(request)
+        except zmq.ZMQError:
+            pass
+        # Mimic the case where Cache is None locally, cally cache.get_key would through attibute error
         raise AttributeError
+
+    def term(self):
+        self.socket.close()
+        try:
+            self.poll.unregister(self.socket)
+        except KeyError:
+            pass
 
 
 class CacheProxy(NetworkMessager):
@@ -236,42 +240,35 @@ class CacheProxy(NetworkMessager):
         super().__init__(ip)
 
     def set_key(self, **kwargs):
-        return self._call('set_key', **kwargs)
+        return self.call('set_key', **kwargs)
 
     def get_key(self, **kwargs):
-        return self._call('get_key', **kwargs)
+        return self.call('get_key', **kwargs)
 
     def add_node(self, **kwargs):
-        return self._call('add_node', **kwargs)
+        return self.call('add_node', **kwargs)
 
 
 class CacheClient(NetworkMessager):
     def __init__(self, ip):
         super().__init__(ip)
-        nodes = self._call('get_nodes')
-        self.available_ips = [x['ip'] for x in nodes]
-        ip = random.choice(self.available_ips)
-        self._change_ip(ip)
+        self.retry_timeout = 2500
 
     def set(self, key, data):
         retries = 0
         while retries <= REQUEST_RETRIES:
             try:
-                self._call('set', key=key, data=data)
+                self.call('set', key=key, data=data)
                 return
             except AttributeError:
-                self.available_ips.remove(self.ip)
-                ip = random.choice(self.available_ips)
-                self._change_ip(ip)
+                pass
             retries += 1
 
     def get(self, key):
         retries = 0
         while retries <= REQUEST_RETRIES:
             try:
-                return self._call('get', key=key)
+                return self.call('get', key=key)
             except AttributeError:
-                self.available_ips.remove(self.ip)
-                ip = random.choice(self.available_ips)
-                self._change_ip(ip)
+                pass
             retries += 1

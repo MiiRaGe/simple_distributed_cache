@@ -1,12 +1,53 @@
 # Log of development status
-### Encountered issues and comments
+
+## Encountered issues and comments
 
 The development was done in incremental step adding complexity over time.
 
-### First Version
+Here is a summary of what's in:
+  - It's in python 3.5
+  - The node.logic.CacheClient(ip) supports get and set
+  - server.py runs a zmq server, it needs 2 cmd line argument or environment variables:
+    * python server.py <binding_ip> <any_other_node>
+    * ZMQ_IP = binding_ip
+    * ZMQ_MASTER = ip of any other node
+  - The cluster can lose 1 node without loosing data
+  - Crude tests only the local cache with multiple local cache instances.
+    * It misses unit test for the proxy and network methods.
+  - Any one need only need the ip of another node
+  - ZeroMQ was used for communicatioin
+  - Every Node can be potentially used by the client
+  - The nodes can be run with docker
+
+What's missing:
+  - More unit tests
+  - Nodes can be added and removed without any downtime.
+    * With the implementation I went for, this would have taken quite a bit of work I think, so I decided to keep it when I'm somewhat satisfied with the rest. Didn't have time to do it in the end.
+  
+Comments:
+  - In theory the project would benefit from a load balancer between client and nodes to spread out the work, so that a node doesn't die for request while the other are fine.
+  - I've encounter a few volatile bug that I did not managed to fix, so it might be unstable.
+  - The usage of ZeroMQ is probably crude, I pick it up as I went.
+  - The implementation of consistent hashing isn't optimized.
+    * It's using binary search on a sorted list and circle around the index "manually"
+    but we could use a more adapted structure, something when circling is convenient and adding/removing/finding is optimal
+
+## Running nodes
+
+    docker build -t cache_node .
+    docker network create --subnet=172.18.0.0/16 cache_cluster
+To run 4 node:
+
+    docker run -e ZMQ_IP=172.18.0.2:5555 -e ZMP_MASTER=172.18.0.2:5555 --net cache_cluster --ip 172.18.0.2 -P -it cache_node
+    docker run -e ZMQ_IP=172.18.0.3:5555 -e ZMP_MASTER=172.18.0.2:5555 --net cache_cluster --ip 172.18.0.3 -P -it cache_node 
+    docker run -e ZMQ_IP=172.18.0.4:5555 -e ZMP_MASTER=172.18.0.3:5555 --net cache_cluster --ip 172.18.0.4 -P -it cache_node 
+
+## Development Stages
+
+### First Version (POC)
 
 The first version was a distributed cache inside an app:
-  - It implements the consistent hashing, the cache stores the uid and instance of each Cache node.
+  - It implements the consistent hashing, the cache stores the uid and instance of each Cache node in a sorted list.
   - Each cache is an instance of class Cache.
   - The Cache class needs to know all nodes in the cache (Set manually like in the tests).
   - The Cache handles (among others) 4 operation:
@@ -71,8 +112,13 @@ A test script then assert:
 
 ### Fifth Version
 
-The handling for when a node is down was based on the internal Python version, so it's checking that the instance is not None.
-
+In the first version the handling for when a node is down was based on the internal Python version, so it's checking that the instance is not None.
 This cannot apply to a CacheProxy.
 
-This version is UNDER CONSTRUCTION
+Changes:
+  - Some request changes to polling with timeout to prevent hanging when a node is down.
+  - It raises an attribute error when network fails so that it behave like calling .set_key on None.
+  - Added Dockerfile, although it's very crude.
+  - Changed the functionnal test file so it's easier to load and verify data
+
+Tried a randomize node for the client by getting the list of nodes from a node and randomize which node is reached, but that doesn't work well when nodes are in an internal network and client needs to know external IP not internal.

@@ -1,4 +1,4 @@
-import json
+import os
 import zmq
 import sys
 
@@ -7,25 +7,35 @@ from uuid import uuid4
 from node.logic import Cache, announce_new
 
 if __name__ == '__main__':
-    ip = sys.argv[1]
+    if len(sys.argv) >= 2:
+        ip = sys.argv[1]
+    else:
+        ip = os.environ.get('ZMQ_IP')
+    if not ip:
+        print('You must give an ip argument or set ZMQ_IP environment variable')
+        exit()
+
+    cache = Cache(str(uuid4()), ip)
+    try:
+        if len(sys.argv) >= 3:
+            master_ip = sys.argv[2]
+        else:
+            master_ip = os.environ.get('ZMP_MASTER')
+        if master_ip and ip != master_ip:
+            print('Announcing self to master ip: %s' % master_ip)
+            announce_new(cache, master_ip)
+    except (IndexError, zmq.ZMQError):
+        pass
+
     context = zmq.Context()
     socket = context.socket(zmq.REP)
     address = "tcp://%s" % ip
     print('Listening to: %s' % address)
     socket.bind(address)
 
-    cache = Cache(str(uuid4()), ip)
-    try:
-        master_ip = sys.argv[2]
-        if ip != master_ip:
-            print('Announcing self to master ip: %s' % master_ip)
-            announce_new(cache, master_ip)
-    except IndexError:
-        pass
-
     while True:
         element = socket.recv_json()
-        print("Received method: %s" % element.get('method'))
+        print("%s: Received method: %s" % (ip, element.get('method')))
         if element['method'] == 'set':
             socket.send_json(cache.set(**element['kwargs']))
             continue
@@ -49,6 +59,4 @@ if __name__ == '__main__':
             cache.add_node(**element['kwargs'])
             socket.send(b"OK")
             continue
-        elif element['method'] == 'heartbeat':
-            socket.send()
         socket.send(b"Unknown Method")
