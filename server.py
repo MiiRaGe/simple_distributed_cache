@@ -25,9 +25,8 @@ if __name__ == '__main__':
         pass
 
     while True:
-        message = socket.recv()
-
-        element = json.loads(message.decode('utf8'))
+        element = socket.recv_json()
+        print(element)
         print("Received method: %s" % element.get('method'))
         if element['method'] == 'set':
             socket.send(json.dumps(cache.set(**element['kwargs'])).encode('utf8'))

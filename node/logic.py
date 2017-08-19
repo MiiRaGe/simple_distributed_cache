@@ -142,7 +142,6 @@ class Cache:
         :return:
         """
         self.nodes.append((get_hashed_key(uid), CacheProxy(uid, ip)))
-        print(self.nodes)
         self.nodes.sort(key=lambda x: x[0])
 
 
@@ -155,18 +154,26 @@ class CacheProxy:
         self.uid = uid
         self.ip = ip
         context = zmq.Context()
-        self.socket = context.socket(zmq.REP)
+        self.socket = context.socket(zmq.REQ)
         self.socket.connect('tcp://%s' % ip)
-        for item in {'get_key', 'set_key', 'add_node'}:
-            def proxy_method(**kwargs):
-                message = json.dumps({
-                    'method': item,
-                    'kwargs': kwargs
-                }).encode('utf8')
-                self.socket.send(message)
-                message = self.socket.recv()
-                return json.loads(message.decode('utf8'))
-            setattr(self, item, proxy_method)
+
+    def call(self, method, **kwargs):
+        message = json.dumps({
+            'method': method,
+            'kwargs': kwargs
+        }).encode('utf8')
+        self.socket.send(message)
+        message = self.socket.recv()
+        return json.loads(message.decode('utf8'))
+
+    def set_key(self, **kwargs):
+        return self.call('set_key', **kwargs)
+
+    def get_key(self, **kwargs):
+        return self.call('get_key', **kwargs)
+
+    def add_node(self, **kwargs):
+        return self.call('add_node', **kwargs)
 
 
 def get_hashed_key(key):
