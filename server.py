@@ -26,22 +26,25 @@ if __name__ == '__main__':
 
     while True:
         element = socket.recv_json()
-        print(element)
         print("Received method: %s" % element.get('method'))
         if element['method'] == 'set':
-            socket.send(json.dumps(cache.set(**element['kwargs'])).encode('utf8'))
+            socket.send_json(cache.set(**element['kwargs']))
             continue
         elif element['method'] == 'get':
-            socket.send(json.dumps(cache.get(**element['kwargs'])).encode('utf8'))
+            socket.send_json(cache.get(**element['kwargs']))
             continue
         elif element['method'] == 'get_key':
-            socket.send(json.dumps(cache.get_key(**element['kwargs'])).encode('utf8'))
+            socket.send_json(cache.get_key(**element['kwargs']))
             continue
         elif element['method'] == 'set_key':
-            socket.send(json.dumps(cache.set_key(**element['kwargs'])).encode('utf8'))
+            socket.send_json(cache.set_key(**element['kwargs']))
+            continue
+        elif element['method'] == 'add_node_and_get_nodes':
+            cache.add_node(**element['kwargs'])
+            socket.send_json(cache.get_nodes())
             continue
         elif element['method'] == 'get_nodes':
-            socket.send(json.dumps(cache.get_nodes()).encode('utf8'))
+            socket.send_json(cache.get_nodes())
             continue
         elif element['method'] == 'add_node':
             cache.add_node(**element['kwargs'])

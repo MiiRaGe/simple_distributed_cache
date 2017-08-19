@@ -108,15 +108,22 @@ class Cache:
         with zmq.Context() as context:
             with context.socket(zmq.REQ) as socket:
                 socket.connect('tcp://%s' % master_ip)
-                message = json.dumps({'method': 'get_nodes'}).encode('utf8')
                 print('Sending request for get_nodes')
-                socket.send(message)
+                socket.send_json({
+                    'method': 'add_node_and_get_nodes',
+                    'kwargs': {'ip': self.ip, 'uid': self.uid}
+                })
                 print('waiting for get_nodes answer')
-                message = socket.recv()
+                nodes = socket.recv_json()
         print('Got Nodes')
-        response_data = json.loads(message.decode('utf8'))
         self.nodes = []
-        for node in response_data:
+        for node in nodes:
+            if node['ip'] == self.ip:
+                self.nodes.append((get_hashed_key(self.uid), self))
+                continue
+            self.nodes.append((get_hashed_key(node['uid']), CacheProxy(node['uid'], node['ip'])))
+            if node['ip'] == master_ip:
+                continue
             with zmq.Context() as context:
                 with context.socket(zmq.REQ) as socket:
                     socket.connect('tcp://%s' % node['ip'])
@@ -126,9 +133,6 @@ class Cache:
                     ).encode('utf8')
                     socket.send(message)
                     message = socket.recv()
-                    self.nodes.append((get_hashed_key(node['uid']), CacheProxy(node['uid'], node['ip'])))
-        self.nodes.append((get_hashed_key(self.uid), self))
-        self.nodes.sort(key=lambda x: x[0])
         print('Announced self')
 
     def get_nodes(self):

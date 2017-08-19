@@ -8,7 +8,6 @@ echo "Spawning $1 Nodes"
 while [ $COUNTER -ne $1 ]
 do
     NEW_PORT=$[$COUNTER+$PORT]
-    sleep .1
     python server.py 127.0.0.1:$NEW_PORT 127.0.0.1:$PORT &
     COUNTER=$[$COUNTER +1]
 done

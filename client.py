@@ -9,6 +9,9 @@ import zmq
 
 if __name__ == '__main__':
     ip = sys.argv[1]
+    number_of_tests = 100
+    if len(sys.argv) == 3:
+        number_of_tests = int(sys.argv[2])
     #  Prepare our context and sockets
     with zmq.Context() as context:
         with context.socket(zmq.REQ) as socket:
@@ -43,10 +46,10 @@ if __name__ == '__main__':
             else:
                 print('Master node knows best')
                 print(set2-set1)
+            raise
 
-    print('Generating random requests')
-    for request in range(0, 100):
-        print('Picking random node')
+    print('Generating random %s requests' % number_of_tests)
+    for request in range(0, number_of_tests):
         socket = random.choice(sockets)
         if not data:
             operation = 'set'
@@ -66,7 +69,6 @@ if __name__ == '__main__':
             received_data = socket.recv_json()
             try:
                 assert received_data == data[key]
-                print('Data is OK')
             except:
                 print('%s request FAILED' % request)
                 print(received_data, data[key])
