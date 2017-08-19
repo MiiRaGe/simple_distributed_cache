@@ -50,4 +50,6 @@ if __name__ == '__main__':
             cache.add_node(**element['kwargs'])
             socket.send(b"OK")
             continue
-        socket.send(b"Ok")
+        elif element['method'] == 'heartbeat':
+            socket.send()
+        socket.send(b"Unknown Method")

@@ -5,7 +5,8 @@ from bisect import bisect_right
 import zmq
 
 REDUNDANCY_SETTING = 1
-
+REQUEST_TIMEOUT = 2500
+REQUEST_RETRIES = 2
 
 class Cache:
     def __init__(self, uuid, ip):
@@ -41,7 +42,7 @@ class Cache:
         :param index:
         :return:
         """
-        while self.nodes[index][1] is None:
+        while not self.nodes[index][1].is_alive():
             index += 1
             if index == len(self.nodes):
                 index = 0
@@ -55,7 +56,7 @@ class Cache:
         """
         Get method for the cache cluster, assumes each node has the list of all nodes.
         It finds where the key is supposed to be, then tries to get it as many time as REDUNDANCY_SETTING
-        Increasing indexes of the node if it's down (None for this scenario).
+        Increasing indexes if it's down.
         It cannot loop infinitely as self is part of the nodes.
         :param key: 
         :return: 
@@ -127,11 +128,10 @@ class Cache:
             with zmq.Context() as context:
                 with context.socket(zmq.REQ) as socket:
                     socket.connect('tcp://%s' % node['ip'])
-                    message = json.dumps({
+                    socket.send_json({
                         'method': 'add_node',
-                        'kwargs': {'ip': self.ip, 'uid': self.uid}}
-                    ).encode('utf8')
-                    socket.send(message)
+                        'kwargs': {'ip': self.ip, 'uid': self.uid}
+                    })
                     message = socket.recv()
         print('Announced self')
 
@@ -148,6 +148,9 @@ class Cache:
         self.nodes.append((get_hashed_key(uid), CacheProxy(uid, ip)))
         self.nodes.sort(key=lambda x: x[0])
 
+    def is_alive(self):
+        return True
+
 
 class CacheProxy:
     """
@@ -157,16 +160,17 @@ class CacheProxy:
     def __init__(self, uid, ip):
         self.uid = uid
         self.ip = ip
-        context = zmq.Context()
-        self.socket = context.socket(zmq.REQ)
+        self.context = zmq.Context()
+        self.socket = self.context.socket(zmq.REQ)
         self.socket.connect('tcp://%s' % ip)
+        self.poll = zmq.Poller()
+        self.poll.register(self.socket, zmq.POLLIN)
 
     def call(self, method, **kwargs):
-        message = json.dumps({
+        self.socket.send_json({
             'method': method,
             'kwargs': kwargs
-        }).encode('utf8')
-        self.socket.send(message)
+        })
         message = self.socket.recv()
         return json.loads(message.decode('utf8'))
 
@@ -178,6 +182,43 @@ class CacheProxy:
 
     def add_node(self, **kwargs):
         return self.call('add_node', **kwargs)
+
+    def is_alive(self, **kwargs):
+        sequence = 0
+        retries_left = REQUEST_RETRIES
+        while retries_left:
+            sequence += 1
+            request = {'method': 'heartbeat', 'kwargs': sequence}
+            self.socket.send_json(request)
+
+            expect_reply = True
+            while expect_reply:
+                socks = dict(self.poll.poll(REQUEST_TIMEOUT))
+                if socks.get(self.socket) == zmq.POLLIN:
+                    reply = self.socket.recv()
+                    if not reply:
+                        break
+                    if int(reply) == sequence:
+                        print("I: Server replied OK (%s)" % reply)
+                        retries_left = REQUEST_RETRIES
+                        expect_reply = False
+                    else:
+                        print("E: Malformed reply from server: %s" % reply)
+
+                else:
+                    print("W: No response from server, retrying…")
+                    # Socket is confused. Close and remove it.
+                    self.socket.setsockopt(zmq.LINGER, 0)
+                    self.socket.close()
+                    self.poll.unregister(self.socket)
+                    retries_left -= 1
+                    if retries_left == 0:
+                        break
+                    # Create new connection
+                    self.socket = self.context.socket(zmq.REQ)
+                    self.socket.connect('tcp://%s' % self.ip)
+                    self.poll.register(self.socket, zmq.POLLIN)
+                    self.socket.send(request)
 
 
 def get_hashed_key(key):
