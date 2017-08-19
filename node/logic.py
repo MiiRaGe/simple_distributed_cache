@@ -28,7 +28,7 @@ class Cache:
         redundancy = 0
         while redundancy <= REDUNDANCY_SETTING:
             new_index, node = self.get_next_node(index)
-            node.set_key(key, data)
+            node.set_key(key=key, data=data)
             if new_index == origin_index:
                 break
             index = new_index
@@ -66,23 +66,23 @@ class Cache:
         redundancy = 0
         while result is None and redundancy <= REDUNDANCY_SETTING:
             new_index, node = self.get_next_node(index)
-            result = node.get_key(key)
+            result = node.get_key(key=key)
             if new_index == origin_index:
                 break
             index = new_index
             redundancy += 1
         return result
 
-    def set_key(self, key, value):
+    def set_key(self, key='', data=None):
         """
         Method to set a an element in the internal cache.
         :param key:
         :param value:
         :return:
         """
-        self.memory_cache[key] = value
+        self.memory_cache[key] = data
 
-    def get_key(self, key):
+    def get_key(self, key=''):
         """
         Method to get a element from the internal dict acting as cache.
         :param key:
@@ -106,30 +106,30 @@ class Cache:
     def announce_new(self, master_ip):
         print('Requesting Nodes')
         with zmq.Context() as context:
-            socket = context.socket(zmq.REQ)
-            socket.connect('tcp://%s' % master_ip)
-            message = json.dumps({'method': 'get_nodes'}).encode('utf8')
-            print('Sending request for get_nodes')
-            socket.send(message)
-            print('waiting for get_nodes answer')
-            message = socket.recv()
+            with context.socket(zmq.REQ) as socket:
+                socket.connect('tcp://%s' % master_ip)
+                message = json.dumps({'method': 'get_nodes'}).encode('utf8')
+                print('Sending request for get_nodes')
+                socket.send(message)
+                print('waiting for get_nodes answer')
+                message = socket.recv()
         print('Got Nodes')
         response_data = json.loads(message.decode('utf8'))
-        self.nodes = response_data
-        for node in self.nodes:
-            print('Adding self to %s' % node.ip)
+        self.nodes = []
+        for node in response_data:
             with zmq.Context() as context:
-                socket = context.socket(zmq.REQ)
-                socket.connect('tcp://%s' % node['ip'])
-                message = json.dumps({
-                    'method': 'add_node',
-                    'kwargs': {'id': self.ip, 'uid': self.uid}}
-                ).encode('utf8')
-                socket.send(message)
-                message = socket.recv()
-
+                with context.socket(zmq.REQ) as socket:
+                    socket.connect('tcp://%s' % node['ip'])
+                    message = json.dumps({
+                        'method': 'add_node',
+                        'kwargs': {'ip': self.ip, 'uid': self.uid}}
+                    ).encode('utf8')
+                    socket.send(message)
+                    message = socket.recv()
+                    self.nodes.append((get_hashed_key(node['uid']), CacheProxy(node['uid'], node['ip'])))
         self.nodes.append((get_hashed_key(self.uid), self))
         self.nodes.sort(key=lambda x: x[0])
+        print('Announced self')
 
     def get_nodes(self):
         return [{'uid': x.uid, 'ip': x.ip} for _, x in self.nodes]
@@ -137,11 +137,12 @@ class Cache:
     def add_node(self, uid=None, ip=''):
         """
         Adds a node from the outside to the internal list
-        :param id:
+        :param uid:
         :param ip:
         :return:
         """
         self.nodes.append((get_hashed_key(uid), CacheProxy(uid, ip)))
+        print(self.nodes)
         self.nodes.sort(key=lambda x: x[0])
 
 
@@ -161,10 +162,10 @@ class CacheProxy:
                 message = json.dumps({
                     'method': item,
                     'kwargs': kwargs
-                })
+                }).encode('utf8')
                 self.socket.send(message)
                 message = self.socket.recv()
-                return message
+                return json.loads(message.decode('utf8'))
             setattr(self, item, proxy_method)
 
 

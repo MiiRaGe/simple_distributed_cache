@@ -9,8 +9,8 @@ from node.logic import Cache, get_hashed_key
 
 class SingleClusterCache(TestCase):
     def setUp(self):
-        self.cache = Cache(0)
-        self.cache.nodes = [(0, self.cache)]
+        self.cache = Cache('0', '')
+        self.cache.nodes = [(get_hashed_key('0'), self.cache)]
 
     def test_get_non_existing_key(self):
         assert self.cache.get('foo') is None
@@ -30,8 +30,8 @@ class SingleClusterCache(TestCase):
 
 class MultipleClusterCache(TestCase):
     def setUp(self):
-        self.caches = [Cache(str(uuid4())) for x in range(0, 10)]
-        self.servers = sorted([(get_hashed_key(cache.id), cache) for cache in self.caches])
+        self.caches = [Cache(str(uuid4()), '') for x in range(0, 10)]
+        self.servers = sorted([(get_hashed_key(cache.uid), cache) for cache in self.caches])
         for cache in self.caches:
             cache.nodes = self.servers
             cache.memory_cache = dict()
@@ -101,8 +101,13 @@ class FourNodeTwoConsecutiveDown(TestCase):
     @mock.patch('node.logic.REDUNDANCY_SETTING', new=2)
     @mock.patch('node.logic.get_hashed_key')
     def test_regression_key_not_found(self, get_hashed_key):
-        caches = [Cache(0) for x in range(0, 4)]
-        nodes = [(i, c) for i, c in enumerate(caches)]
+        caches = []
+        nodes = []
+        for x in range(0, 4):
+            get_hashed_key.return_value = x
+            cache = Cache('0', '')
+            caches.append(cache)
+            nodes.append((get_hashed_key(x), cache))
         for cache in caches:
             cache.nodes = nodes
         # Set this to 5 so the next node is 0

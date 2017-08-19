@@ -6,4 +6,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD [ "python", "./server.py", "", ""]
+EXPOSE 5555
+CMD [ "python", "./server.py", "127.0.0.1:5555", "172.168.0.1:5555"]

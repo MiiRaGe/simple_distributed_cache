@@ -15,7 +15,7 @@ if __name__ == '__main__':
     print('Listening to: %s' % address)
     socket.bind(address)
 
-    cache = Cache(str(uuid4()), address)
+    cache = Cache(str(uuid4()), ip)
     try:
         master_ip = sys.argv[2]
         if ip != master_ip:
