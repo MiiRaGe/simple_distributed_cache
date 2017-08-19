@@ -38,10 +38,21 @@ Comments:
     docker network create --subnet=172.18.0.0/16 cache_cluster
 To run 4 node:
 
-    docker run -e ZMQ_IP=172.18.0.2:5555 -e ZMP_MASTER=172.18.0.2:5555 --net cache_cluster --ip 172.18.0.2 -P -it cache_node
-    docker run -e ZMQ_IP=172.18.0.3:5555 -e ZMP_MASTER=172.18.0.2:5555 --net cache_cluster --ip 172.18.0.3 -P -it cache_node 
-    docker run -e ZMQ_IP=172.18.0.4:5555 -e ZMP_MASTER=172.18.0.3:5555 --net cache_cluster --ip 172.18.0.4 -P -it cache_node 
+    docker run -d -e ZMQ_IP=172.18.0.2:5555 --net cache_cluster --ip 172.18.0.2 -P -it cache_node
+    docker run -d -e ZMQ_IP=172.18.0.3:5555 -e ZMP_MASTER=172.18.0.2:5555 --net cache_cluster --ip 172.18.0.3 -P -it cache_node 
+    docker run -d -e ZMQ_IP=172.18.0.4:5555 -e ZMP_MASTER=172.18.0.3:5555 --net cache_cluster --ip 172.18.0.4 -P -it cache_node 
 
+To add testing data:
+
+    python functional_test.py <ip> <number_of_keys> verify/add_data
+    
+Test Routine (How I usually tested it):
+    
+    python functional_test.py <ip> 100 add_data
+    python functional_test.py <ip> 100 verify
+    python functional_test.py <ip2> 100 verify
+    python functional_test.py <ip3> 100 verify
+    
 ## Development Stages
 
 ### First Version (POC)
