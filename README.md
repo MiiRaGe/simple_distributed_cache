@@ -23,7 +23,8 @@ What's missing:
   - More unit tests
   - Nodes can be added and removed without any downtime.
     * With the implementation I went for, this would have taken quite a bit of work I think, so I decided to keep it when I'm somewhat satisfied with the rest. Didn't have time to do it in the end.
-  
+    * I've looked at ways to do that but it didn't look simple.
+
 Comments:
   - In theory the project would benefit from a load balancer between client and nodes to spread out the work, so that a node doesn't die for request while the other are fine.
   - I've encounter a few volatile bug that I did not managed to fix, so it might be unstable.
