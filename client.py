@@ -22,3 +22,7 @@ if __name__ == '__main__':
         socket.send(json.dumps({'method': 'get', 'kwargs': {'key': 'key%s' % request}}).encode('utf8'))
         message = socket.recv()
         print("Received reply %s [%s]" % (request, message))
+
+    socket.send(json.dumps({'method': 'get_nodes'}).encode('utf8'))
+    message = socket.recv()
+    print("Received reply %s" % message)

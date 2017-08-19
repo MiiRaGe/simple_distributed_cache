@@ -104,23 +104,29 @@ class Cache:
         return index if index != len(self.nodes) else 0
 
     def announce_new(self, master_ip):
+        print('Requesting Nodes')
         with zmq.Context() as context:
-            socket = context.socket(zmq.REP)
+            socket = context.socket(zmq.REQ)
             socket.connect('tcp://%s' % master_ip)
             message = json.dumps({'method': 'get_nodes'}).encode('utf8')
+            print('Sending request for get_nodes')
             socket.send(message)
+            print('waiting for get_nodes answer')
             message = socket.recv()
+        print('Got Nodes')
         response_data = json.loads(message.decode('utf8'))
         self.nodes = response_data
         for node in self.nodes:
+            print('Adding self to %s' % node.ip)
             with zmq.Context() as context:
-                socket = context.socket(zmq.REP)
+                socket = context.socket(zmq.REQ)
                 socket.connect('tcp://%s' % node['ip'])
                 message = json.dumps({
                     'method': 'add_node',
                     'kwargs': {'id': self.ip, 'uid': self.uid}}
                 ).encode('utf8')
                 socket.send(message)
+                message = socket.recv()
 
         self.nodes.append((get_hashed_key(self.uid), self))
         self.nodes.sort(key=lambda x: x[0])
@@ -150,17 +156,16 @@ class CacheProxy:
         context = zmq.Context()
         self.socket = context.socket(zmq.REP)
         self.socket.connect('tcp://%s' % ip)
-
-    def __getattr__(self, item):
-        def proxy_method(**kwargs):
-            message = json.dumps({
-                'method': item,
-                'kwargs': kwargs
-            })
-            self.socket.send(message)
-            message = self.socket.recv()
-            return message
-        return proxy_method
+        for item in {'get_key', 'set_key', 'add_node'}:
+            def proxy_method(**kwargs):
+                message = json.dumps({
+                    'method': item,
+                    'kwargs': kwargs
+                })
+                self.socket.send(message)
+                message = self.socket.recv()
+                return message
+            setattr(self, item, proxy_method)
 
 
 def get_hashed_key(key):

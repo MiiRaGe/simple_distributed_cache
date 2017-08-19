@@ -19,15 +19,16 @@ if __name__ == '__main__':
     try:
         master_ip = sys.argv[2]
         if ip != master_ip:
+            print('Announcing self to master ip: %s' % master_ip)
             cache.announce_new(master_ip)
     except IndexError:
         pass
 
     while True:
         message = socket.recv()
-        print("Received request: %s" % message)
 
         element = json.loads(message.decode('utf8'))
+        print("Received method: %s" % element.get('method'))
         if element['method'] == 'set':
             socket.send(json.dumps(cache.set(**element['kwargs'])).encode('utf8'))
             continue
@@ -46,4 +47,5 @@ if __name__ == '__main__':
         elif element['method'] == 'add_node':
             cache.add_node(**element['kwargs'])
             socket.send(b"OK")
+            continue
         socket.send(b"Ok")
