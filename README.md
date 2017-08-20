@@ -14,6 +14,7 @@ Here is a summary of what's in:
   - The cluster can lose 1 node without loosing data
   - Crude tests only the local cache with multiple local cache instances.
     * It misses unit test for the proxy and network methods.
+    * Use `pytest` to run
   - Any one need only need the ip of another node
   - ZeroMQ was used for communicatioin
   - Every Node can be potentially used by the client
