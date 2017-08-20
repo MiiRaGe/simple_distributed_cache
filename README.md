@@ -65,7 +65,7 @@ To run 4 node:
 
 To add testing data:
 
-    python functional_test.py <ip> <number_of_keys> verify/add_data
+    python functionnal_test.py <ip> <number_of_keys> verify/add_data
     
 Test Routine (How I usually tested it):
     
