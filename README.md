@@ -22,16 +22,35 @@ Here is a summary of what's in:
 What's missing:
   - More unit tests
   - Nodes can be added and removed without any downtime.
-    * With the implementation I went for, this would have taken quite a bit of work I think, so I decided to keep it when I'm somewhat satisfied with the rest. Didn't have time to do it in the end.
-    * I've looked at ways to do that but it didn't look simple.
+  
+For adding and removing nodes, the way I wanted to go if I had more time is, not sure if it would work:
+  - Adding a node:
+    - A new node announce itself in 'JOINING' mode.
+    - A rehash thread start
+    - The set_key operation is logged in a queue
+    - The rehash thread get keys for the node after the joining one, see which key should be on the joining node,
+    get the data for those keys from the next node and initialize the joining node with that data, then replays the
+    logged set_key operations, and when the queue is empty set the node to 'ACTIVE' and announce the node as 'ACTIVE'
+     to rest of the nodes
+    - Redundancy have to be handled somehow to prevent memory leak.
+    - The other nodes know that the node is 'JOINING' so skip it for get_key
+  - Removing a node:
+    - A node announce itself in 'LEAVING' mode.
+    - A rehash thread start
+    - The rehash thread get keys for the node leaving, set them on the next node (also applying redundancy)
+    - The other nodes know that the node is 'LEAVING' so make them skip it for set_key
+    - Not sure about the order for keys if a value is set on the next node and was on the leaving node, need some timestamp to make sure that it doesn't override new data.
+    - When all keys are set on other nodes, the node should be shut down without losing data.
+
+This jobs looks more as something a supervisor would do rather than the nodes itself, having a manager outside the cluster which just handle adding/removing nodes.
+
 
 Comments:
   - In theory the project would benefit from a load balancer between client and nodes to spread out the work, so that a node doesn't die for request while the other are fine.
-  - I've encounter a few volatile bug that I did not managed to fix, so it might be unstable.
-  - The usage of ZeroMQ is probably crude, I pick it up as I went.
+  - The usage of ZeroMQ is probably crude, I picked it up as I went.
   - The implementation of consistent hashing isn't optimized.
     * It's using binary search on a sorted list and circle around the index "manually"
-    but we could use a more adapted structure, something when circling is convenient and adding/removing/finding is optimal
+    but we could use a more adapted structure, something where circling is convenient and adding/removing/finding is optimal
 
 ## Running nodes
 
