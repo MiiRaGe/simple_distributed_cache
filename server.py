@@ -3,6 +3,7 @@ import zmq
 import sys
 
 from uuid import uuid4
+from collections import deque
 
 from node.logic import Cache, announce_new
 
@@ -16,6 +17,7 @@ if __name__ == '__main__':
         exit()
 
     cache = Cache(str(uuid4()), ip)
+    pending_write_queue = deque()
     try:
         if len(sys.argv) >= 3:
             master_ip = sys.argv[2]
@@ -24,6 +26,7 @@ if __name__ == '__main__':
         if master_ip and ip != master_ip:
             print('Announcing self to master ip: %s' % master_ip)
             announce_new(cache, master_ip)
+
     except (IndexError, zmq.ZMQError):
         pass
 
@@ -46,7 +49,11 @@ if __name__ == '__main__':
             socket.send_json(cache.get_key(**element['kwargs']))
             continue
         elif element['method'] == 'set_key':
-            socket.send_json(cache.set_key(**element['kwargs']))
+            if cache.status == 'JOINING':
+                pending_write_queue.append(element['kwargs'])
+                socket.send_json(None)
+            else:
+                socket.send_json(cache.set_key(**element['kwargs']))
             continue
         elif element['method'] == 'add_node_and_get_nodes':
             cache.add_node(**element['kwargs'])
@@ -58,5 +65,14 @@ if __name__ == '__main__':
         elif element['method'] == 'add_node':
             cache.add_node(**element['kwargs'])
             socket.send(b"OK")
+            continue
+        elif element['method'] == 'get_keys':
+            socket.send_json(list(cache.memory_cache.keys()))
+        elif element['method'] == 'update_node':
+            cache.update_node(**element['kwargs'])
+            socket.send(b"OK")
+            continue
+        elif element['method'] == 'get_values':
+            socket.send_json(cache.get_values(**element['kwargs']))
             continue
         socket.send(b"Unknown Method")

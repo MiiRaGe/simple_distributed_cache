@@ -2,6 +2,8 @@ import json
 import random
 from hashlib import sha1
 from bisect import bisect_right
+from json import JSONDecodeError
+from threading import Thread
 
 import zmq
 
@@ -55,6 +57,7 @@ def announce_new(new_cache, master_ip):
                     'kwargs': {'ip': new_cache.ip, 'uid': new_cache.uid}
                 })
                 socket.recv()
+    # TODO: Start a thread to rehash
 
 
 class Cache:
@@ -63,6 +66,7 @@ class Cache:
         self.ip = ip
         self.memory_cache = {}
         self.nodes = [(get_hashed_key(uuid), self)]
+        self.status = 'ACTIVE'
 
     def set(self, key='', data=None):
         """
@@ -78,6 +82,8 @@ class Cache:
         redundancy = 0
         while redundancy <= REDUNDANCY_SETTING:
             new_index, node = self.get_next_node(index)
+            if node.status == 'LEAVING':
+                continue
             try:
                 node.set_key(key=key, data=data)
                 redundancy += 1
@@ -99,6 +105,8 @@ class Cache:
         redundancy = 0
         while redundancy <= REDUNDANCY_SETTING:
             new_index, node = self.get_next_node(index)
+            if node.status == 'JOINING':
+                continue
             try:
                 return node.get_key(key=key)
             except AttributeError:
@@ -161,8 +169,16 @@ class Cache:
         :param ip:
         :return:
         """
-        self.nodes.append((get_hashed_key(uid), CacheProxy(uid, ip)))
+        self.nodes.append((get_hashed_key(uid), CacheProxy(uid, ip, 'JOINING')))
         self.nodes.sort(key=lambda x: x[0])
+
+    def update_node(self, uid=None, status='ACTIVE'):
+        indexed_key = get_hashed_key(uid)
+        index = bisect_right(self.nodes, (indexed_key, 0))
+        self.nodes[index][1].status = status
+
+    def get_values(self, keys=[]):
+        return [(key, self.get_key(key)) for key in keys]
 
 
 class NetworkMessager:
@@ -235,8 +251,9 @@ class CacheProxy(NetworkMessager):
     There's no differences in behaviour between local and remote cache.
     """
 
-    def __init__(self, uid, ip):
+    def __init__(self, uid, ip, status='JOINING'):
         self.uid = uid
+        self.status = status
         super().__init__(ip)
 
     def set_key(self, **kwargs):
@@ -272,3 +289,33 @@ class CacheClient(NetworkMessager):
             except AttributeError:
                 pass
             retries += 1
+
+
+def joining_rehash(cache, queue=None):
+    nodes = [node for _, node in cache.nodes]
+    index = cache.get_next_node_index(cache.uid)
+    new_index, next_node = cache.get_next_node(index)
+    keys = next_node.get_keys()
+    keys_to_remove = []
+    keys_to_add = []
+    joining_node_hash = get_hashed_key(cache.uid)
+    for key in keys:
+        if get_hashed_key(key) <= joining_node_hash:
+            keys_to_add.append(key)
+            keys_to_remove.append(key)
+    values = next_node.get_values(keys=keys_to_add)
+    for key, value in values:
+        cache.set_key(key, value)
+    new_index, next_node = cache.get_next_node(index)
+    if next_node != cache:
+        # Remove redundancy to save memory
+        next_node.remove_keys(keys=keys_to_remove)
+    try:
+        while queue:
+            kwargs = queue.pop_left()
+            cache.set_key(**kwargs)
+    except KeyError:
+        pass
+    cache.status = 'ACTIVE'
+    for node in cache.nodes:
+        if node != cache:
