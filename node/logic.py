@@ -1,5 +1,3 @@
-import json
-import random
 from hashlib import sha1
 from bisect import bisect_right
 
@@ -24,7 +22,7 @@ def get_hashed_key(key):
 
 def announce_new(new_cache, master_ip):
     """
-    This modifies announces new_cache to the master_ip.
+    This announces new_cache to the master_ip.
     Gets the list of node from the master_ip.
     Then announce the new_cache to the list of nodes in the cluster.
     :param new_cache:
@@ -109,7 +107,6 @@ class Cache:
     def get_next_node(self, index):
         """
         Get the next available node as well as the index of the next one
-        It cannot loop infinitely as self is part of the nodes.
         :param index:
         :return:
         """
@@ -131,7 +128,7 @@ class Cache:
 
     def get_key(self, key=''):
         """
-        Method to get a element from the internal dict acting as cache.
+        Method to get a element from the internal cache.
         :param key:
         :return:
         """
@@ -174,21 +171,6 @@ class NetworkMessager:
         self.poll = zmq.Poller()
         self.poll.register(self.socket, zmq.POLLIN)
         self.retry_timeout = REQUEST_TIMEOUT
-
-    def _change_ip(self, ip):
-        """
-        Set the ip to a random node in the cluster so that request are spread sort of evenly.
-        :return:
-        """
-        self.ip = ip
-        self.socket.close()
-        try:
-            self.poll.unregister(self.socket)
-        except KeyError:
-            pass
-        self.socket = self.context.socket(zmq.REQ)
-        self.socket.connect('tcp://%s' % ip)
-        self.poll.register(self.socket, zmq.POLLIN)
 
     def call(self, method, **kwargs):
         print('\tRemote method: %s' % method)
