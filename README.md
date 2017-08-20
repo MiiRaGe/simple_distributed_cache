@@ -18,7 +18,7 @@ Here is a summary of what's in:
   - Any one need only need the ip of another node
   - ZeroMQ was used for communicatioin
   - Every Node can be potentially used by the client
-  - The nodes can be run with docker
+  - The nodes can be run with docker, although it can be improve, I don't use Docker on a daily basis so not super familiar with it.
 
 What's missing:
   - More unit tests
