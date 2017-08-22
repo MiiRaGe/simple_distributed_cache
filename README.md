@@ -1,3 +1,7 @@
+# Time Constraint
+
+This whole project was done in a 48h time constraint.
+
 # Log of development status
 
 ## Encountered issues and comments
